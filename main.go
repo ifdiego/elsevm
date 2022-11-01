@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 )
 
@@ -50,6 +49,52 @@ const (
 	FL_NEG uint16 = 1 << 2 // N
 )
 
+func signExtend(x uint16, bit_count int) uint16 {
+	if (x >> (bit_count - 1) & 1) != 0 {
+		x |= 0xFFFF << bit_count
+	}
+	return x
+}
+
+func updateFlags(r uint16) {
+	if register[r] == 0 {
+		register[R_COND] = FL_ZRO
+	} else if (register[r] >> 15) == 1 { // a 1 in the left-most bit indicates negative
+		register[R_COND] = FL_NEG
+	} else {
+		register[R_COND] = FL_POS
+	}
+}
+
 func main() {
-	fmt.Println(math.MaxUint16) // 65535
+	// set the PC to starting position
+	// 0x3000 is the default
+	var PC_START uint16 = 0x3000
+	register[R_PC] = PC_START
+
+	for {
+		instr := memRead(register[R_PC])
+		op := instr >> 12
+		register[R_PC]++
+
+		switch op {
+		case OP_ADD:
+		case OP_AND:
+		case OP_NOT:
+		case OP_BR:
+		case OP_JMP:
+		case OP_JSR:
+		case OP_LD:
+		case OP_LDI:
+		case OP_LDR:
+		case OP_LEA:
+		case OP_ST:
+		case OP_STI:
+		case OP_STR:
+		case OP_TRAP:
+		case OP_RES:
+		case OP_RTI:
+		default:
+		}
+	}
 }
