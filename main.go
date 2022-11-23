@@ -1,13 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"log"
 	"math"
+	"os"
 )
-
-type Memory [math.MaxUint16 + 1]uint16
-
-var memory Memory
 
 const (
 	R_R0 uint16 = iota
@@ -23,7 +22,11 @@ const (
 	R_COUNT
 )
 
-var register [R_COUNT]uint16
+const (
+	FL_POS uint16 = 1 << 0 // P
+	FL_ZRO uint16 = 1 << 1 // Z
+	FL_NEG uint16 = 1 << 2 // N
+)
 
 const (
 	OP_BR   uint16 = iota // branch
@@ -45,9 +48,8 @@ const (
 )
 
 const (
-	FL_POS uint16 = 1 << 0 // P
-	FL_ZRO uint16 = 1 << 1 // Z
-	FL_NEG uint16 = 1 << 2 // N
+	MR_KBSR uint16 = 0xFE00 // keyboard status
+	MR_KBDR uint16 = 0xFE02 // keyboard data
 )
 
 const (
@@ -59,10 +61,10 @@ const (
 	TRAP_HALT  uint16 = 0x25 // halt the problem
 )
 
-const (
-	MR_KBSR uint16 = 0xFE00 // keyboard status
-	MR_KBDR uint16 = 0xFE02 // keyboard data
-)
+type Memory [math.MaxUint16 + 1]uint16
+
+var memory Memory
+var register [R_COUNT]uint16
 
 func signExtend(x uint16, bit_count int) uint16 {
 	if (x >> (bit_count - 1) & 1) != 0 {
@@ -87,6 +89,11 @@ func (m *Memory) memWrite(address uint16, val uint16) {
 
 func (m *Memory) memRead(address uint16) uint16 {
 	if address == MR_KBSR {
+		reader := bufio.NewReader(os.Stdin)
+		//TODO: fix
+		char, _ := reader.ReadByte() //returns byte
+		checkKey                     // uint16 of char
+
 		if checkKey != 0 {
 			m[MR_KBSR] = 1 << 15
 			m[MR_KBDR] = checkKey
@@ -206,11 +213,40 @@ func main() {
 
 			switch instr & 0xFF {
 			case TRAP_GETC:
+				// read a single ASCII char
+				reader := bufio.NewReader(os.Stdin)
+				c, _ := reader.ReadByte()
+				r0 := string(c)
+				updateFlags(r0)
 			case TRAP_OUT:
+				fmt.Printf("%c", register[R_R0])
 			case TRAP_PUTS:
+				// one char per word
+				for c := register[R_R0]; c[address] != 0x00; c++ {
+					fmt.Println("%c", c[address])
+				}
 			case TRAP_IN:
+				reader := bufio.NewReader(os.Stdin)
+				fmt.Println("Enter a character: ")
+				c, _ := reader.ReadByte()
+				fmt.Printf("%c", c)
+				r0 := string(c)
+				updateFlags(r0)
 			case TRAP_PUTSP:
+				// one char per byte (two bytes per word)
+				// here we need to swap back to
+				// big endian format
+				for c := register[R_R0]; c[address] != 0x00; c++ {
+					char1 := c[address]
+					fmt.Printf("%c", char1&0xFF)
+					char2 := char1 & 0xFF >> 8
+					if char2 != 0 {
+						fmt.Printf("%c", char2)
+					}
+				}
 			case TRAP_HALT:
+				log.Printf("HALT")
+				os.Exit(0)
 			}
 		case OP_RES:
 			log.Printf("Invalid instruction")
