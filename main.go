@@ -1,11 +1,15 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
+	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"math"
 	"os"
+
+	"github.com/eiannone/keyboard"
 )
 
 const (
@@ -65,12 +69,36 @@ type Memory [math.MaxUint16 + 1]uint16
 
 var memory Memory
 var register [R_COUNT]uint16
+var nativeEndian binary.ByteOrder
+
+func keyboardRead() uint16 {
+	symbol, controlKey, err := keyboard.GetSingleKey()
+
+	if controlKey == keyboard.KeyEsc || controlKey == keyboard.KeyCtrlC {
+		log.Println("Pressed escaping")
+		os.Exit(0)
+	}
+
+	if err != nil {
+		log.Printf("Error, %s", err)
+	}
+
+	return uint16(symbol)
+}
 
 func signExtend(x uint16, bit_count int) uint16 {
 	if (x >> (bit_count - 1) & 1) != 0 {
 		x |= 0xFFFF << bit_count
 	}
 	return x
+}
+
+func swap16(x uint16) uint16 {
+	if nativeEndian == binary.BigEndian {
+		return (x << 8) | (x >> 8)
+	} else {
+		return x
+	}
 }
 
 func updateFlags(r uint16) {
@@ -83,16 +111,57 @@ func updateFlags(r uint16) {
 	}
 }
 
+func readImageFile(file string) {
+	// the origin tells us where in memory to place the image
+	var origin uint16
+
+	data, _ := readImage(file)
+	buffer := bytes.NewBuffer(data)
+	origin = swap16(binary.BigEndian.Uint16(buffer.Next(2)))
+
+	bufferLen := buffer.Len()
+
+	for i := 0; i < bufferLen; i++ {
+		b := buffer.Next(2)
+		if len(b) == 0 {
+			break
+		}
+		memory[origin] = swap16(binary.BigEndian.Uint16(b))
+		origin++
+	}
+
+	log.Printf("Program has been read into memory, contains %d bytes, %d words", bufferLen, bufferLen/2)
+}
+
+func readImage(imagePath string) ([]byte, int64) {
+	file, err := os.Open(imagePath)
+	if err != nil {
+		log.Fatal("Error while opening file", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var size int64 = info.Size()
+	data := make([]byte, size)
+
+	_, err = file.Read(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return data, size
+}
+
 func (m *Memory) memWrite(address uint16, val uint16) {
 	m[address] = val
 }
 
 func (m *Memory) memRead(address uint16) uint16 {
 	if address == MR_KBSR {
-		reader := bufio.NewReader(os.Stdin)
-		//TODO: fix
-		char, _ := reader.ReadByte() //returns byte
-		checkKey                     // uint16 of char
+		checkKey := keyboardRead()
 
 		if checkKey != 0 {
 			m[MR_KBSR] = 1 << 15
@@ -105,13 +174,21 @@ func (m *Memory) memRead(address uint16) uint16 {
 }
 
 func main() {
+	imageFilePath := flag.String("image", "empty image", "go -image program.obj")
+	flag.Parse()
+	readImageFile(*imageFilePath)
+
+	// since exactly one condition flag should be set at anu given time, set the Z flag
+	register[R_COND] = FL_ZRO
+
 	// set the PC to starting position
 	// 0x3000 is the default
 	var PC_START uint16 = 0x3000
 	register[R_PC] = PC_START
+	log.Println("Computer starting...")
 
 	for {
-		instr := memRead(register[R_PC])
+		instr := memory.memRead(register[R_PC])
 		op := instr >> 12
 		register[R_PC]++
 
@@ -161,7 +238,7 @@ func main() {
 			r1 := (instr >> 6) & 0x7
 			register[R_PC] = register[r1]
 		case OP_JSR:
-			longFlag := (instr > 11) & 0x1
+			longFlag := (instr >> 11) & 0x1
 			register[R_R7] = register[R_PC]
 
 			if longFlag == 1 {
@@ -169,75 +246,71 @@ func main() {
 				register[R_PC] += longPcOffset // JSR
 			} else {
 				r1 := (instr >> 9) & 0x7
-				register[R_PC] = register[R1] // JSSR
+				register[R_PC] = register[r1] // JSSR
 			}
 		case OP_LD:
 			r0 := (instr >> 9) & 0x7
-			pcOffset = signExtend(instr&0x1FF, 9)
-			register[r0] = memRead(register[R_PC] + pcOffset)
+			pcOffset := signExtend(instr&0x1FF, 9)
+			register[r0] = memory.memRead(register[R_PC] + pcOffset)
 			updateFlags(r0)
 		case OP_LDI:
-			// destination register
+			// destination register (DR)
 			r0 := (instr >> 9) & 0x7
-			// PCoffset
-			pcOffset = signExtend(instr&0x1FF, 9)
+			// PCoffset 9
+			pcOffset := signExtend(instr&0x1FF, 9)
 			// add pcOffset to the current PC, look at that memory location to get the final address
-			register[r0] = memRead(memRead(register[R_PC] + pcOffset))
+			register[r0] = memory.memRead(memory.memRead(register[R_PC] + pcOffset))
 			updateFlags(r0)
 		case OP_LDR:
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			offset := signExtend(instr&0x3F, 6)
-			register[r0] = memRead(register[r1] + offset)
-			udpateFlags(r0)
+			register[r0] = memory.memRead(register[r1] + offset)
+			updateFlags(r0)
 		case OP_LEA:
 			r0 := (instr >> 9) & 0x7
-			pcOffset = signExtend(instr&0x1FF, 9)
+			pcOffset := signExtend(instr&0x1FF, 9)
 			register[r0] = register[R_PC] + pcOffset
 			updateFlags(r0)
 		case OP_ST:
 			r0 := (instr >> 9) & 0x7
 			pcOffset := signExtend(instr&0x1FF, 9)
-			memWrite(register[R_PC]+pcOffset, register[r0])
+			memory.memWrite(register[R_PC]+pcOffset, register[r0])
 		case OP_STI:
 			r0 := (instr >> 9) & 0x7
-			pcOffset = signExtend(instr&0x1FF, 9)
-			memWrite(memRead(register[R_PC]+pcOffset), register[r0])
+			pcOffset := signExtend(instr&0x1FF, 9)
+			memory.memWrite(memory.memRead(register[R_PC]+pcOffset), register[r0])
 		case OP_STR:
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
-			offset = signExtend(instr&0x3F, 6)
-			memWrite(register[r1]+offset, register[r0])
+			offset := signExtend(instr&0x3F, 6)
+			memory.memWrite(register[r1]+offset, register[r0])
 		case OP_TRAP:
 			register[R_R7] = register[R_PC]
 
 			switch instr & 0xFF {
 			case TRAP_GETC:
 				// read a single ASCII char
-				reader := bufio.NewReader(os.Stdin)
-				c, _ := reader.ReadByte()
-				r0 := string(c)
-				updateFlags(r0)
+				register[R_R0] = keyboardRead()
 			case TRAP_OUT:
 				fmt.Printf("%c", register[R_R0])
 			case TRAP_PUTS:
 				// one char per word
-				for c := register[R_R0]; c[address] != 0x00; c++ {
-					fmt.Println("%c", c[address])
+				for c := register[R_R0]; memory[c] != 0x00; c++ {
+					fmt.Printf("%c", memory[c])
 				}
 			case TRAP_IN:
-				reader := bufio.NewReader(os.Stdin)
 				fmt.Println("Enter a character: ")
-				c, _ := reader.ReadByte()
-				fmt.Printf("%c", c)
-				r0 := string(c)
+				symbol := keyboardRead()
+				fmt.Printf("%c", symbol)
+				r0 := symbol
 				updateFlags(r0)
 			case TRAP_PUTSP:
 				// one char per byte (two bytes per word)
 				// here we need to swap back to
 				// big endian format
-				for c := register[R_R0]; c[address] != 0x00; c++ {
-					char1 := c[address]
+				for c := register[R_R0]; memory[c] != 0x00; c++ {
+					char1 := memory[c]
 					fmt.Printf("%c", char1&0xFF)
 					char2 := char1 & 0xFF >> 8
 					if char2 != 0 {
@@ -245,7 +318,7 @@ func main() {
 					}
 				}
 			case TRAP_HALT:
-				log.Printf("HALT")
+				log.Printf("Computer halting...")
 				os.Exit(0)
 			}
 		case OP_RES:
