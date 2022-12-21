@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -174,9 +173,18 @@ func (m *Memory) memRead(address uint16) uint16 {
 }
 
 func main() {
-	imageFilePath := flag.String("image", "empty image", "go -image program.obj")
-	flag.Parse()
-	readImageFile(*imageFilePath)
+	args := os.Args[1:]
+	if len(args) == 0 {
+		fmt.Println("No input file")
+		os.Exit(0)
+	}
+
+	if len(args) > 1 {
+		fmt.Println("Failed to load image")
+		os.Exit(0)
+	}
+
+	readImageFile(os.Args[1])
 
 	// since exactly one condition flag should be set at anu given time, set the Z flag
 	register[R_COND] = FL_ZRO
