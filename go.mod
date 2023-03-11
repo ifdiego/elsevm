@@ -1,4 +1,4 @@
-module github.com/ifdiego/vmgo
+module github.com/ifdiego/elsevm
 
 go 1.19
 
