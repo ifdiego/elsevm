@@ -186,7 +186,7 @@ func main() {
 
 	readImageFile(os.Args[1])
 
-	// since exactly one condition flag should be set at anu given time, set the Z flag
+	// since exactly one condition flag should be set at any given time, set the Z flag
 	register[R_COND] = FL_ZRO
 
 	// set the PC to starting position
@@ -204,7 +204,7 @@ func main() {
 		case OP_ADD:
 			// destination register (DR)
 			r0 := (instr >> 9) & 0x7
-			// first operannd (SR1)
+			// first operand (SR1)
 			r1 := (instr >> 6) & 0x7
 			// whether we are in immediate mode
 			imm_flag := (instr >> 5) & 0x1
@@ -242,7 +242,7 @@ func main() {
 				register[R_PC] += pcOffset
 			}
 		case OP_JMP:
-			// Also handles RET
+			// also handles RET
 			r1 := (instr >> 6) & 0x7
 			register[R_PC] = register[r1]
 		case OP_JSR:
